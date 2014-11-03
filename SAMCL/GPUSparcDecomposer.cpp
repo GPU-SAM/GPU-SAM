@@ -5,7 +5,6 @@
 #include <string.h>
 #include <pthread.h>
 
-#define MSG_SIZE 15
 
 #define CEIL(x,y) x % y == 0 ? x/y : (int)(x/y)+1
 
@@ -13,45 +12,6 @@ char msgL[MSG_SIZE];
 
 mqd_t *readyKLaunch;
 mqd_t readyLaunch;
-
-void prepareAll () {
-	readyKLaunch = (mqd_t *)malloc(sizeof(mqd_t) * nGPU_GPUSparc);
-}
-
-void prepareLaunch (int gpu, int n) {
-	//printf("prepare kernel\n");
-	char buf[MSG_SIZE];
-	memset (buf, 0, MSG_SIZE);
-	sprintf (buf, "/%dke%d", gpu, pid);
-	readyKLaunch[gpu] = mq_open (buf, O_RDONLY| O_CREAT, 0666, &attr);
-	sprintf(buf, "%d %d %d", gpu, n, pid);
-	mq_send (kernelmanager, buf, MSG_SIZE, prio);
-	mq_receive (readyKLaunch[gpu], msgL, MSG_SIZE, NULL);
-}
-
-void waitLaunch (mqd_t mqdes, int index) {
-	//printf("wait kernel %d\n", index);
-	mq_send (mqdes, msgL, MSG_SIZE, prio);
-	mq_receive (readyKLaunch[index], msgL, MSG_SIZE, NULL);
-	//printf("wait kernel done %d\n", index);
-
-}
-
-void doneLaunch (mqd_t mqdes, int index) {
-	//printf("done kernel %d\n", index);
-	memset (msgL, 0, MSG_SIZE);
-	mq_send (mqdes, msgL, MSG_SIZE, prio);
-}
-
-void endLaunch() {
-	//printf("end kernel\n");
-	mq_close (readyLaunch);
-	cl_uint i;
-	for(i = 0; i < nGPU_GPUSparc; i++) {
-		mq_close (readyKLaunch[i]);
-	}
-	free (readyKLaunch);
-}
 
 
 struct kernelLauncherData{
@@ -71,6 +31,7 @@ struct kernelLauncherData{
 	cl_event *event;
 };
 
+void *single_kernel_launcher (void *data);
 void *kernel_launcher (void *data)
 {
 	struct kernelLauncherData *kd = (struct kernelLauncherData *)data;
@@ -81,14 +42,6 @@ void *kernel_launcher (void *data)
 		if (i != kd->max_index)
 			global_work[i] = kd->global_work_size[i];
 	}
-	char buf[MSG_SIZE];
-	char msg[MSG_SIZE];
-	memset (buf, 0, MSG_SIZE);
-	sprintf (buf, "/ckernel%d", kd->index);
-	mqd_t complete = mq_open (buf, O_WRONLY | O_CREAT, 0666, &attr);
-	memset (msg, 0, MSG_SIZE);
-	sprintf (msg, "/kernel%d", kd->index);
-	mqd_t mqdes = mq_open (msg, O_WRONLY | O_CREAT, 0666, &attr);
 
 	unsigned int one = 1;
 	unsigned int zero = 0;
@@ -108,12 +61,15 @@ void *kernel_launcher (void *data)
 	}
 	cl_uint j;
 	size_t remain = kd->size;
-	size_t step = kd->step/kd->local_work_size[kd->max_index];
+	size_t step = kd->step;
+	if (kd->local_work_size != NULL)
+		step /= kd->local_work_size[kd->max_index];
+
 	unsigned int off = kd->off;
-	prepareLaunch (kd->index, remain/step);
 	while (remain > 0) {
 		size_t size = remain >= 2*step ? step : remain;
-		global_work[kd->max_index] = size*kd->local_work_size[kd->max_index];
+		if (kd->local_work_size != NULL)	global_work[kd->max_index] = size*kd->local_work_size[kd->max_index];
+		else global_work[kd->max_index] = size;
 		remain -= size;
 		for(j = 0; j < 3; j++) {
 			if (j == kd->max_index) 
@@ -121,15 +77,14 @@ void *kernel_launcher (void *data)
 			else
 				__real_clSetKernelArg (kd->kernel, kd->arg_num+4+j, sizeof(unsigned int), &zero);
 		}
-		
-		waitLaunch (mqdes, kd->index);
+		sendRequest('g', kd->index, 1);
+		waitRequest('g', kd->index);
 		__real_clEnqueueNDRangeKernel (queue_GPUSparc[kd->index], kd->kernel, kd->work_dim, kd->global_work_offset, global_work, kd->local_work_size, 0, NULL, kd->event);
-		__real_clFinish (queue_GPUSparc[kd->index]);
-		doneLaunch (complete, kd->index);
+		__real_clFinish (queue_GPUSparc[gpuid]);
+		sendFinish('g', kd->index, 1);
 		off += size;
+
 	}
-	mq_close (mqdes);
-	mq_close (complete);
 	free (global_work);
 	return NULL;
 }
@@ -162,7 +117,7 @@ cl_int decomposer_GPUSparc(cl_kernel 	  	kernel,
 	unsigned int *num_group = (unsigned int *)malloc(sizeof(unsigned int) * work_dim);
 
 	for(i = 0; i < work_dim; i++) {
-		local_work[i] = (local_work_size != NULL)? local_work_size[i] : ((global_work_size[i] % 4 == 0) ? 4 : 1);
+		local_work[i] = (local_work_size != NULL)? local_work_size[i] : 1;
 		num_group[i] = global_work_size[i]/local_work[i];
 	}
 
@@ -196,32 +151,13 @@ cl_int decomposer_GPUSparc(cl_kernel 	  	kernel,
 	
 	cl_uint arg_index = kiter->second.arg_num;
 
-	prepareAll();
 	if (!multiGPUmode)
 	{	
 		if (migration)
 			gpuid = -1;
-		int gpu = gpuid;
-		char buf[MSG_SIZE];
-		int n = global_work_size[max_index]/step;
-		sprintf(buf, "%d %d %d", gpu, 0, pid);
-		mq_send (kernelmanager, buf, MSG_SIZE, prio);
 		
-		unsigned int pr = prio;
-		mqd_t ready;
-		if (gpu < 0){
-			ready = mq_open (thisone, O_RDONLY , 0666, &attr);
-			memset (buf, 0, MSG_SIZE);
-			unsigned int pr = prio;
-			mq_receive (ready, buf, MSG_SIZE, &pr);
-			sscanf(buf, "%d", &gpuid);
-		}
-		else {
-			memset (buf, 0, MSG_SIZE);
-			sprintf (buf, "/%dke%d", gpuid, pid);
-			ready = mq_open (buf, O_RDONLY, 0666, &attr);
-			mq_receive (ready, buf, MSG_SIZE, &pr);
-		}
+		sendRequest('g', gpuid, 1);
+		gpuid = waitRequest('g', -1);
 		struct kernelLauncherData *kd = (struct kernelLauncherData *)malloc(sizeof(struct kernelLauncherData));
 		kd->index = gpuid;
 		kd->kernel = kernels[gpuid];
@@ -229,21 +165,20 @@ cl_int decomposer_GPUSparc(cl_kernel 	  	kernel,
 		kd->work_dim = work_dim;
 		kd->global_work_size = global_work_size;
 		kd->global_work_offset = global_work_offset;
-		kd->local_work_size = local_work;
+		kd->local_work_size = local_work_size;
 		kd->step = step;
 		kd->num_groups = num_group;
 		kd->arg_num = arg_index;
 		kd->event = NULL;
-		kd->size = global_work_size[max_index]/local_work_size[max_index];
+		kd->size = global_work_size[max_index]/local_work[max_index];
 		kd->off = 0;
-		kernel_launcher (kd);
-		free (readyKLaunch);
+		single_kernel_launcher (kd);
 	}
 	else {
 
 	
 		struct kernelLauncherData *kd = (struct kernelLauncherData *)malloc(sizeof(struct kernelLauncherData)*nGPU_GPUSparc);
-		int total = global_work_size[max_index]/local_work_size[max_index];
+		int total = global_work_size[max_index]/local_work[max_index];
 		int nGPU = nGPU_GPUSparc;
 		
 		for(i = 0; i < nGPU_GPUSparc; i++) {
@@ -251,16 +186,16 @@ cl_int decomposer_GPUSparc(cl_kernel 	  	kernel,
 			kd[i].kernel = kernels[i];
 			kd[i].work_dim = work_dim;
 			kd[i].max_index = max_index;
-				kd[i].global_work_size = global_work_size;
+			kd[i].global_work_size = global_work_size;
 			kd[i].global_work_offset = global_work_offset;
-			kd[i].local_work_size = local_work;
-				kd[i].step = step;
+			kd[i].local_work_size = local_work_size;
+			kd[i].step = step;
 			kd[i].num_groups = num_group;
 			kd[i].arg_num = arg_index;
-				kd[i].event = &tevent[i];
-				int amount = CEIL(total,nGPU);
+			kd[i].event = &tevent[i];
+			int amount = CEIL(total,nGPU);
 			total -= amount;
-				nGPU--;
+			nGPU--;
 			kd[i].size = amount;
 			if (i == 0)
 					kd[i].off = 0;
@@ -269,14 +204,13 @@ cl_int decomposer_GPUSparc(cl_kernel 	  	kernel,
 		}
 	
 		pthread_t *kthread = (pthread_t *)malloc(sizeof(pthread_t) * nGPU_GPUSparc);
-	for(i = 0; i < nGPU_GPUSparc; i++) {
-		pthread_create (&kthread[i], NULL, kernel_launcher, &kd[i]);
-	}
+		for(i = 0; i < nGPU_GPUSparc; i++) {
+			pthread_create (&kthread[i], NULL, kernel_launcher, &kd[i]);
+		}
 
-	for(i = 0; i < nGPU_GPUSparc; i++) {
-		pthread_join (kthread[i], NULL);
-	}
-	endLaunch ();
+		for(i = 0; i < nGPU_GPUSparc; i++) {
+			pthread_join (kthread[i], NULL);
+		}
 
 
 		if (event != NULL) {
@@ -295,6 +229,8 @@ cl_int decomposer_GPUSparc(cl_kernel 	  	kernel,
 		if (!multiGPUmode)
 			minfo->cohered_gpu = gpuid;
 	}
+	if (migration)
+		gpuid = -1;
 
 	free (num_group);
 	free (local_work);
@@ -325,16 +261,19 @@ cl_uint getStep (cl_uint work_dim,
 				 const size_t * local_work_size,
 				 cl_uint max_index)
 {
-	cl_uint i;
-	cl_uint cu = 1;
+	if (multiGPUmode)
+		return global_work_size[max_index]/nGPU_GPUSparc;
+	else
+		return global_work_size[max_index];
+	/*
 	for(i = 0; i < work_dim; i++) {
 		if (i != max_index) {
 			cu *= global_work_size[i] / local_work_size[i];
 		}
-	}
+	}*/
 	/* decide # of work-groups per executino */
 
-	GPUSparcLog("%d %d %d\n", global_work_size[max_index], local_work_size[max_index], nGPU_GPUSparc);
+	/*GPUSparcLog("%d %d %d\n", global_work_size[max_index], local_work_size[max_index], nGPU_GPUSparc);
 	cl_uint step = CEIL (nComputeUnit * 64, cu);
 	step *= local_work_size[max_index];
 	if (step > global_work_size[max_index]/nGPU_GPUSparc)
@@ -348,5 +287,42 @@ cl_uint getStep (cl_uint work_dim,
 	}
 
 	GPUSparcLog ("step:=%d\n", step);
-	return step;
+	return step;*/
+}
+
+
+void *single_kernel_launcher (void *data)
+{
+	struct kernelLauncherData *kd = (struct kernelLauncherData *)data;
+
+	cl_uint i;
+	cl_uint j;
+
+	unsigned int one = 1;
+	unsigned int zero = 0;
+	
+	for(i = 0; i < 3; i++) {
+		if (i < kd->work_dim)
+			__real_clSetKernelArg (kd->kernel,kd->arg_num+1+i, sizeof(unsigned int), &(kd->global_work_size[i]));
+		else
+			__real_clSetKernelArg (kd->kernel, kd->arg_num+1+i, sizeof(unsigned int), &one);
+	}
+	for(i = 0; i < 3; i++) {
+		if (i < kd->work_dim) {
+			__real_clSetKernelArg (kd->kernel, kd->arg_num+7+i, sizeof(unsigned int), &(kd->num_groups[i]));
+		}
+		else
+			__real_clSetKernelArg (kd->kernel, kd->arg_num+7+i, sizeof(unsigned int), &one);
+	}
+	for(j = 0; j < 3; j++) {
+		if (j == kd->max_index) 
+			__real_clSetKernelArg (kd->kernel, kd->arg_num+4+j, sizeof(unsigned int), &zero);
+		else
+			__real_clSetKernelArg (kd->kernel, kd->arg_num+4+j, sizeof(unsigned int), &zero);
+	}
+	__real_clEnqueueNDRangeKernel (queue_GPUSparc[gpuid], kd->kernel, kd->work_dim, kd->global_work_offset, kd->global_work_size, kd->local_work_size, 0, NULL, kd->event);
+	__real_clFinish (queue_GPUSparc[gpuid]);
+	//printf("%d\n", gpuid);
+	sendFinish('g', gpuid, 1);
+	return NULL;
 }

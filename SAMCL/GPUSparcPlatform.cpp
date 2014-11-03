@@ -27,23 +27,21 @@ __wrap_clGetPlatformIDs(cl_uint			num_entries,
 						cl_uint*		num_platforms) CL_API_SUFFIX__VERSION_1_0
 {
 	GPUSparcLog("This is modified library (GPUSparc)\n");
-	attr.mq_maxmsg = MAXMSG;
-	attr.mq_msgsize = 15;
+	attr.mq_maxmsg = MAX_MSG;
+	attr.mq_msgsize = MSG_SIZE;
 	attr.mq_flags = 0;
-	prio = getpriority (PRIO_PROCESS, 0);
+
+	struct sched_param param;
+	sched_getparam (0, &param);
+	prio = param.sched_priority;
 	printf ("priority = %d\n",prio);
 	pid = getpid();
-	if (cmanager == 0) {
-		printf("reset mq\n");
-		sprintf(thisone, "/%d", pid);
-		printf("%s\n", thisone);
-		cmanager = mq_open ("/cmanager", O_WRONLY | O_CREAT, 0664, &attr);
-		kmanager = mq_open ("/kmanager", O_WRONLY | O_CREAT, 0664, &attr);
-		copymanager = mq_open ("/copy", O_WRONLY | O_CREAT, 0664, &attr);
-		copycomplete = mq_open ("/copy_complete", O_WRONLY | O_CREAT, 0664, &attr);
-
-		kernelmanager = mq_open ("/kmanager", O_WRONLY | O_CREAT, 0664, &attr);
-
+	printf("pid = %d\n", pid);
+	if (GPUSAMrequest == 0) {
+		GPUSAMrequest = mq_open ("/GPUSAM_request", O_WRONLY | O_CREAT, 0664, &attr);
+	}
+	if (GPUSAMfinish == 0) {
+		GPUSAMfinish = mq_open ("/GPUSAM_finish", O_WRONLY | O_CREAT, 0664, &attr);
 	}
 	return __real_clGetPlatformIDs(num_entries, platforms, num_platforms);
 }

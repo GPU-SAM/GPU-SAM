@@ -9,7 +9,7 @@
 #include <sched.h>
 #include <sys/resource.h>
 
-#define CHUNK_SIZE (2*1024*1024)
+#define CHUNK_SIZE (8*1024*1024)
 #define MSG_SIZE 15
 
 #define CEIL(x,y) x%y==0 ? x/y : (int)(x/y)+1
@@ -26,27 +26,6 @@ struct tinfo {
 
 char msg[MSG_SIZE];
 
-void prepareCopy (int n) {
-	char buf[MSG_SIZE];
-	ready = mq_open(thisone, O_RDONLY | O_CREAT, 0664, &attr);
-	sprintf (buf, "%d %d %d", 0, n, pid);
-	mq_send (cmanager, buf, MSG_SIZE, prio);
-	mq_receive (ready, msg, MSG_SIZE, NULL);
-}
-
-void waitCopy () {
-	mq_send (copymanager, msg, MSG_SIZE, prio);
-	mq_receive (ready, msg, MSG_SIZE, NULL);
-}
-
-void doneCopy () {
-	mq_send (copycomplete, msg, MSG_SIZE, prio);
-}
-
-void endCopy () {
-	mq_close (ready);
-}
-
 
 void *t_merge (void *data);
 
@@ -54,10 +33,7 @@ cl_int bufferMerger_GPUSparc (struct meminfo_GPUSparc *minfo, cl_event *event)
 {
 	cl_int ret = CL_SUCCESS;
 	cl_mem *mems = minfo->mem;
-	
 	timeval t1, t2;
-
-
 	cl_uint i;
 	void **buffer = (void **)malloc(sizeof(void *) * nGPU_GPUSparc);
 	
@@ -69,7 +45,7 @@ cl_int bufferMerger_GPUSparc (struct meminfo_GPUSparc *minfo, cl_event *event)
 		int n = minfo->size / CHUNK_SIZE;
 		if (n == 0) n++;
 
-		prepareCopy (nGPU_GPUSparc*n);
+		sendRequest ('p', 0, n*nGPU_GPUSparc);
 		gettimeofday (&t1, NULL);
 		int j;
 
@@ -79,14 +55,13 @@ cl_int bufferMerger_GPUSparc (struct meminfo_GPUSparc *minfo, cl_event *event)
 			size_t off = 0;
 			for(j = 0; j < n; j++) {
 				size_t size = remain < 2*CHUNK_SIZE?remain:CHUNK_SIZE;
-				waitCopy();
+				waitRequest('p', 0);
 				ret |= __real_clEnqueueReadBuffer (queue_GPUSparc[i], mems[i], CL_TRUE, off, size, (char *)buffer[i]+off, 0, NULL, &tevent[i]);
 				remain -= size;
 				off += size;
-				doneCopy();
+				sendFinish ('p', 0, 0);
 			}
 		}
-		endCopy ();
 		if (event != NULL) {
 			*event = tevent[0];
 			eventmap_GPUSparc.insert (map<cl_event,cl_event *>::value_type (tevent[0], tevent));
@@ -137,7 +112,7 @@ cl_int bufferMerger_GPUSparc (struct meminfo_GPUSparc *minfo, cl_event *event)
 	else {
 		int n = minfo->size/CHUNK_SIZE;
 		if (n == 0) n++;
-		prepareCopy (n);
+		sendRequest ('p', 0, n);
 		gettimeofday (&t1, NULL);
 		int j;
 
@@ -145,15 +120,13 @@ cl_int bufferMerger_GPUSparc (struct meminfo_GPUSparc *minfo, cl_event *event)
 		size_t remain = minfo->size;
 		for(j = 0; j < n; j++) {
 			size_t size = remain < 2*CHUNK_SIZE?remain:CHUNK_SIZE;
-			waitCopy();
+			waitRequest('p', 0);
 			ret |= __real_clEnqueueReadBuffer (queue_GPUSparc[minfo->cohered_gpu], mems[minfo->cohered_gpu], CL_TRUE, off, size, (char *)minfo->shadow_buffer+off, 0, NULL, event);
 
 			remain -= size;
 			off += size;
-			doneCopy();
-		
+			sendFinish ('p', 0, 0);		
 		}
-		endCopy ();
 		gettimeofday (&t2, NULL);
 		GPUSparcLog ("Read time: %f\n", ELAPSEDTIME(t1,t2));	
 	}
@@ -188,8 +161,7 @@ cl_int bufferSynchronizer_GPUSparc (struct meminfo_GPUSparc *minfo, size_t *offs
 
 			int n = (minfo->size)/CHUNK_SIZE;
 			if (n == 0) n++;
-			prepareCopy (nGPU_GPUSparc*n);
-
+			sendRequest ('p', 0, n*nGPU_GPUSparc);
 			cl_uint j;
 			for(j = 0; j < nGPU_GPUSparc; j++) {
 				size_t remain = minfo->size;
@@ -197,32 +169,30 @@ cl_int bufferSynchronizer_GPUSparc (struct meminfo_GPUSparc *minfo, size_t *offs
 				int i;
 				for(i = 0; i < n; i++) {
 					size_t size = CHUNK_SIZE*2 > remain? remain : CHUNK_SIZE;
-					waitCopy ();
+					waitRequest ('p', 0);
 					ret |= __real_clEnqueueWriteBuffer (queue_GPUSparc[j], minfo->mem[j], CL_TRUE, off, size, (char *)minfo->shadow_buffer+off, 0, NULL, &tevent[j]);
-					doneCopy();
 					off += size;
 					remain -= size;
+					sendFinish ('p', 0, 0);
 				}
 			}
-			endCopy();
 		}
 		else if (gpuid >= 0){
-			int n = (minfo->size)/CHUNK_SIZE;
+			unsigned n = (minfo->size)/CHUNK_SIZE;
 			if (n == 0) n++;
-			prepareCopy (n);
+
+			sendRequest('p', 0, n);
 			size_t remain = minfo->size;
 			size_t off = 0;
 
 			for(i = 0; i < n; i++) {
 				size_t size = CHUNK_SIZE*2 > remain? remain: CHUNK_SIZE;
-				waitCopy ();
+				waitRequest ('p', 0);
 				ret |= __real_clEnqueueWriteBuffer (queue_GPUSparc[gpuid], minfo->mem[gpuid], CL_TRUE, off, size, (char *)minfo->shadow_buffer+off, 0, NULL, NULL);
-				doneCopy();
 				off += size;
 				remain -= size;
+				sendFinish ('p', 0, 0);
 			}
-			endCopy();
-
 		}
 		else {
 			printf("?\n?\n");
@@ -235,15 +205,13 @@ cl_int bufferSynchronizer_GPUSparc (struct meminfo_GPUSparc *minfo, size_t *offs
 		size_t slice_pitch = minfo->region[1] * row_pitch;
 
 
-		int n = 2;
-		prepareCopy (n);
-
+		int n = nGPU_GPUSparc;
+		sendRequest ('p', 0, n);
 		for(i = 0; i < nGPU_GPUSparc; i++) {
-			waitCopy ();
+			waitRequest ('p', 0);
 			ret |= __real_clEnqueueWriteBufferRect (queue_GPUSparc[i], minfo->mem[i], CL_TRUE, offset, offset, region, row_pitch, slice_pitch, row_pitch, slice_pitch, minfo->shadow_buffer, 0, NULL, &tevent[i]);
-			doneCopy ();
+			sendFinish ('p', 0, 0);
 		}
-		endCopy ();
 	}
 	if (event != NULL) {
 		*event = tevent[0];
@@ -276,33 +244,28 @@ cl_int clEnqueueWriteBufferGPUSparc
 
 	if (gpuid >= 0 && !migration && !multiGPUmode) {
 		GPUSparcLog ("Single Mode\n");
-		int n = cb / CHUNK_SIZE;
+		unsigned n = cb / CHUNK_SIZE;
 		if (n == 0) n++;
-		prepareCopy (n);
-
-
-		cl_uint j;
+		sendRequest ('p', 0, n);
 		size_t remain = cb;
 		size_t off = offset;
 		size_t ptr_off = 0;
 		for(i = 0; i < n; i++) {
 			size_t size = CHUNK_SIZE*2 > remain? remain : CHUNK_SIZE;
-			waitCopy();
+			waitRequest ('p', 0);
 			ret |= __real_clEnqueueWriteBuffer (queue_GPUSparc[gpuid], minfo->mem[gpuid], CL_TRUE, off, size, (char *)ptr+ptr_off, 0, NULL, NULL);
-			doneCopy();
 			off += size;
 			ptr_off += size;
 			remain -= size;
+			sendFinish ('p', 0, 0);
 		}
-		endCopy ();
 	}
 	else {
 		
-		int n = cb / CHUNK_SIZE;
+		unsigned n = cb / CHUNK_SIZE;
 		if (n == 0) n++;
-		prepareCopy (nGPU_GPUSparc*n);
 
-
+		sendRequest ('p', 0, n*nGPU_GPUSparc);
 		cl_uint j;
 		for(j = 0; j < nGPU_GPUSparc; j++) {
 			size_t remain = cb;
@@ -310,16 +273,15 @@ cl_int clEnqueueWriteBufferGPUSparc
 			size_t ptr_off = 0;
 			for(i = 0; i < n; i++) {
 				size_t size = CHUNK_SIZE*2 > remain? remain : CHUNK_SIZE;
-				waitCopy();
+				waitRequest('p', 0);
 				ret |= __real_clEnqueueWriteBuffer (queue_GPUSparc[j], minfo->mem[j], CL_TRUE, off, size, (char *)ptr+ptr_off, 0, NULL, &tevent[j]);
 
-				doneCopy();
 				off += size;
 				ptr_off += size;
 				remain -= size;
+				sendFinish ('p', 0, 0);
 			}
 		}
-		endCopy();
 	}
 
 

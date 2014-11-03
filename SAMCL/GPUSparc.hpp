@@ -11,6 +11,9 @@
 
 #define ELAPSEDTIME(x,y) (y.tv_sec-x.tv_sec)+(y.tv_usec-x.tv_usec)/1000000.0
 
+#define MAX_MSG 256
+#define MSG_SIZE 15
+
 using namespace std;
 
 
@@ -48,11 +51,8 @@ extern int gpuid;
 extern cl_uint nGPU_GPUSparc;
 extern cl_uint nCPU_GPUSparc;
 
-extern mqd_t cmanager;
-extern mqd_t kmanager;
-extern mqd_t copymanager;
-extern mqd_t copycomplete;
-extern mqd_t kernelmanager;
+extern mqd_t GPUSAMrequest;
+extern mqd_t GPUSAMfinish;
 
 extern char  thisone[15];
 extern struct mq_attr attr;
@@ -90,3 +90,7 @@ extern FILE *kernelParser_GPUSparc (const char *);
 
 /* event */
 extern cl_int waitEventGPUSparc (cl_uint, const cl_event *);
+
+extern void sendRequest(char, int, int);
+extern int waitRequest (char, int);
+extern void sendFinish (char, int, int);
