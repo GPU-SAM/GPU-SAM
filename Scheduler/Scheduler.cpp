@@ -104,7 +104,7 @@ void *manage_request (void *args)
 				}
 					
 
-				for(i = 0; i < nGPU; i++) 
+				for(i = nGPU-1; i >=0; i--) 
 					pthread_mutex_unlock (&mutexGPU[i]);
 			}
 			else {

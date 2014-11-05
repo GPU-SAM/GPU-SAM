@@ -80,7 +80,7 @@ void *kernel_launcher (void *data)
 		sendRequest('g', kd->index, 1);
 		waitRequest('g', kd->index);
 		__real_clEnqueueNDRangeKernel (queue_GPUSparc[kd->index], kd->kernel, kd->work_dim, kd->global_work_offset, global_work, kd->local_work_size, 0, NULL, kd->event);
-		__real_clFinish (queue_GPUSparc[gpuid]);
+		__real_clFinish (queue_GPUSparc[kd->index]);
 		sendFinish('g', kd->index, 1);
 		off += size;
 
