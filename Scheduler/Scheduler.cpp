@@ -84,12 +84,13 @@ void *manage_request (void *args)
 					if (!runGPU[i] && !done) {
 						//printf("GPU%d availble now\n", i);
 						char gpuid[MSG_SIZE];
-						printf("%d gpu selected!\n", i);
+						//printf("%d gpu selected!\n", i);
 						sprintf(gpuid, "%d", i);
 						sprintf(output, "/%d%c%d", pid, type,which);
 						//printf("%s\n", output);
 						mqd_t grant = mq_open (output, O_WRONLY | O_CREAT, 0664, &attr);
 						mq_send (grant, gpuid, MSG_SIZE, prio);
+						mq_close (grant);
 						runGPU[i] = true;
 						done = true;
 					}
@@ -104,7 +105,7 @@ void *manage_request (void *args)
 				}
 					
 
-				for(i = nGPU-1; i >=0; i--) 
+				for(i = nGPU-1; i >= 0; i--) 
 					pthread_mutex_unlock (&mutexGPU[i]);
 			}
 			else {
@@ -121,6 +122,7 @@ void *manage_request (void *args)
 					//printf("%s\n", output);
 					mqd_t grant = mq_open (output, O_WRONLY | O_CREAT, 0664, &attr);
 					mq_send (grant, output, MSG_SIZE, prio);
+					mq_close (grant);
 					runGPU[which] = true;
 				}
 				pthread_mutex_unlock (&mutexGPU[which]);
@@ -141,13 +143,14 @@ void *manage_request (void *args)
 					pqPCI.push (Request (pid, prio, nRequest-1));
 				mqd_t grant = mq_open (output, O_WRONLY | O_CREAT, 0664, &attr);
 				mq_send (grant, output, MSG_SIZE, prio);
+				mq_close (grant);
 				runPCI = true;
 				//printf("PCI available now\n");
 			}
 			pthread_mutex_unlock (&mutexPCI);
 		}
 		else {
-			printf("wront reqeust\n");
+			printf("wrong reqeust\n");
 		}
 	}
 	return NULL;
@@ -198,6 +201,7 @@ void *manage_finish (void *args)
 					sprintf(output, "/%d%c%d", r1.pid, type, which);
 					mqd_t grant = mq_open (output, O_WRONLY | O_CREAT, 0664, &attr);
 					mq_send (grant, output, MSG_SIZE, prio);
+					mq_close (grant);
 				}
 				else {
 					pqGPUALL.pop();
@@ -209,9 +213,10 @@ void *manage_finish (void *args)
 					sprintf(output, "/%d%c%d", r2.pid, type, -1);
 					char gpuid[MSG_SIZE];
 					sprintf(gpuid, "%d", which);
-					printf("%d gpu selected\n",which);
+					//printf("%d gpu selected\n",which);
 					mqd_t grant = mq_open (output, O_WRONLY | O_CREAT, 0664, &attr);
 					mq_send (grant, gpuid, MSG_SIZE, prio);
+					mq_close (grant);
 				}
 			}
 			pthread_mutex_unlock (&mutexGPUALL);
@@ -237,6 +242,7 @@ void *manage_finish (void *args)
 				sprintf(output, "/%d%c", r.pid, type);
 				mqd_t grant = mq_open (output, O_WRONLY | O_CREAT, 0664, &attr);
 				mq_send (grant, output, MSG_SIZE, prio);
+				mq_close (grant);
 			}
 			pthread_mutex_unlock (&mutexPCI);
 		}
