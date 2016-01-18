@@ -72,7 +72,7 @@ void *manage_request (void *args)
 		int pid;
 		int nRequest;
 		sscanf(buf, "%c %d %d %d", &type, &which, &pid, &nRequest);
-		//printf("request\t%s\n", buf);
+		printf("request\t%s\n", buf);
 		/* if request is gpu */
 		if (type == 'g') {
 			/* not decided yet */
@@ -172,7 +172,7 @@ void *manage_finish (void *args)
 		int pid;
 		int nRequest;
 		sscanf(buf, "%c %d %d %d", &type, &which, &pid, &nRequest);
-		//printf("finish\t%s\n", buf);
+		printf("finish\t%s\n", buf);
 		/* if the resource is GPU */
 		if (type == 'g') {
 			pthread_mutex_lock (&mutexGPU[which]);

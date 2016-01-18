@@ -22,14 +22,14 @@ C_INCLUDE_PATH:=./
 LDFLAGS= -lOpenCL $(LINKTAIL)
 OBJECTS=$(SOURCES:.cpp=.o)
 
-all: libGPUSparc.so
+all: libGPUSAM.so
 
-libGPUSparc.so: $(OBJECTS)
-	$(CC) -O3 -shared -o libGPUSparc.so $(OBJECTS) $(LDFLAGS) -lpthread -lfl -lrt -lc
+libGPUSAM.so: $(OBJECTS)
+	$(CC) -O3 -shared -o libGPUSAM.so $(OBJECTS) $(LDFLAGS) -lpthread -lfl -lrt -lc
 
 .cpp.o: $(SOURCES)
 	flex -o GPUSparcKernelParser.cpp GPUSparcKernelParser.l
 	$(CC) -O3 -c -Wall -fPIC $(SOURCES) -I$(C_INCLUDE_PATH)
 
 clean:
-	rm $(OBJECTS) libGPUSparc.so GPUSparcKernelParser.cpp
+	rm $(OBJECTS) libGPUSAM.so GPUSparcKernelParser.cpp

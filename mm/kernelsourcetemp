@@ -1,0 +1,19 @@
+__kernel
+void matrixMultiplication(__global float* A, __global float* B, __global float* C,  int widthA, int heightA, int widthB,unsigned int GPUSPARC_GLOBAL_SIZE0,unsigned int GPUSPARC_GLOBAL_SIZE1,unsigned int GPUSPARC_GLOBAL_SIZE2,unsigned int GPUSPARC_GROUP_OFFSET0,unsigned int GPUSPARC_GROUP_OFFSET1,unsigned int GPUSPARC_GROUP_OFFSET2,unsigned int GPUSPARC_NUM_GROUPS0,unsigned int GPUSPARC_NUM_GROUPS1,unsigned int GPUSPARC_NUM_GROUPS2)
+{
+	int i = (get_global_id(0)+get_local_size(0)*GPUSPARC_GROUP_OFFSET0);
+	int j = (get_global_id(1)+get_local_size(1)*GPUSPARC_GROUP_OFFSET1);
+	float value=0;
+
+
+ if (j < heightA && i < widthB)
+ {
+	for ( int k = 0; k < widthA; k++)
+	{
+		value += A[k + j * widthA] * B[k*widthB + i];
+	}
+	C[i + widthB * j] = value;
+ }
+}
+
+

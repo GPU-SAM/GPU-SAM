@@ -15,7 +15,7 @@ cl_uint nGPU_GPUSparc = 2;
 cl_uint nCPU_GPUSparc = 4;
 
 /* mode */
-bool multiGPUmode = false;
+bool multiGPUmode = true;
 bool migration = true;
 
 
